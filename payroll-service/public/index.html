@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Enterprise HR Integration Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="glass-bg"></div>
+  
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <i class="fa-solid fa-circle-nodes branding-icon"></i>
+        <div class="logo-text">
+          <h2>HR Enterprise</h2>
+          <p>EAI Microservices Dashboard</p>
+        </div>
+      </div>
+      
+      <nav class="sidebar-nav">
+        <button class="nav-item active" data-tab="hris">
+          <i class="fa-solid fa-users-gear"></i>
+          <span>HRIS Service</span>
+          <span class="nav-port">Port 3001</span>
+        </button>
+        <button class="nav-item" data-tab="attendance">
+          <i class="fa-solid fa-clipboard-user"></i>
+          <span>Attendance</span>
+          <span class="nav-port">Port 3002</span>
+        </button>
+        <button class="nav-item" data-tab="payroll">
+          <i class="fa-solid fa-money-check-dollar"></i>
+          <span>Payroll</span>
+          <span class="nav-port">Port 3003</span>
+        </button>
+        <button class="nav-item" data-tab="integration">
+          <i class="fa-solid fa-terminal"></i>
+          <span>EAI Monitor</span>
+          <span class="nav-port">Port 3004</span>
+        </button>
+      </nav>
+      
+      <div class="sidebar-footer">
+        <div class="status-indicator">
+          <span class="status-dot disconnected" id="rabbitmq-dot"></span>
+          <span class="status-label" id="rabbitmq-label">RabbitMQ Connecting...</span>
+        </div>
+        <div class="active-badge" id="loaded-port-badge">Port: Loading...</div>
+      </div>
+    </aside>
+    
+    <!-- Main Content Panel -->
+    <main class="main-content">
+      
+      <!-- HRIS Tab Content -->
+      <div id="tab-hris" class="tab-content active">
+        <div class="tab-header-pane">
+          <div>
+            <h1>HRIS Service <span>(Human Resource Information System)</span></h1>
+            <p class="tab-subtitle">Pusat pengelolaan dan pendataan karyawan perusahaan.</p>
+          </div>
+        </div>
+        
+        <div class="dashboard-grid">
+          <!-- Left Column: Add Employee Form -->
+          <section class="card glass-card form-section">
+            <h2><i class="fa-solid fa-user-plus"></i> Tambah Karyawan Baru</h2>
+            <p class="section-desc">Masukkan informasi karyawan baru. Setelah ditambahkan, Anda dapat menyinkronkan data ini dengan sistem EAI.</p>
+            
+            <form id="add-employee-form">
+              <div class="form-group">
+                <label for="employee-name"><i class="fa-solid fa-signature"></i> Nama Lengkap</label>
+                <input type="text" id="employee-name" required placeholder="Contoh: John Doe">
+              </div>
+              
+              <div class="form-group">
+                <label for="employee-email"><i class="fa-solid fa-envelope"></i> Email Enterprise</label>
+                <input type="email" id="employee-email" required placeholder="Contoh: johndoe@company.com">
+              </div>
+    
+              <div class="form-group">
+                <label for="employee-role"><i class="fa-solid fa-briefcase"></i> Jabatan / Role</label>
+                <select id="employee-role" required>
+                  <option value="" disabled selected>Pilih Jabatan...</option>
+                  <option value="Software Engineer">Software Engineer</option>
+                  <option value="Product Manager">Product Manager</option>
+                  <option value="UI/UX Designer">UI/UX Designer</option>
+                  <option value="HR Specialist">HR Specialist</option>
+                  <option value="QA Engineer">QA Engineer</option>
+                  <option value="Data Analyst">Data Analyst</option>
+                </select>
+              </div>
+    
+              <div class="form-group">
+                <label for="employee-salary"><i class="fa-solid fa-money-bill-wave"></i> Gaji Pokok (Rp)</label>
+                <input type="number" id="employee-salary" required min="1000000" placeholder="Contoh: 7500000">
+              </div>
+    
+              <button type="submit" class="btn btn-primary btn-block">
+                <i class="fa-solid fa-floppy-disk"></i> Tambah Karyawan
+              </button>
+            </form>
+          </section>
+    
+          <!-- Right Column: Employee Table -->
+          <section class="card glass-card table-section">
+            <div class="table-header">
+              <h2><i class="fa-solid fa-table-list"></i> Database Karyawan (HRIS)</h2>
+              <span class="count-badge" id="employee-count">0 Karyawan</span>
+            </div>
+            
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Nama</th>
+                    <th>Email</th>
+                    <th>Jabatan</th>
+                    <th>Gaji Pokok</th>
+                    <th>Status</th>
+                    <th>Aksi</th>
+                  </tr>
+                </thead>
+                <tbody id="employee-table-body">
+                  <tr>
+                    <td colspan="7" class="empty-state">
+                      <i class="fa-solid fa-folder-open"></i>
+                      <p>Memuat data karyawan...</p>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div>
+      
+      <!-- Attendance Tab Content -->
+      <div id="tab-attendance" class="tab-content">
+        <div class="tab-header-pane">
+          <div>
+            <h1>Attendance Service <span>(Pencatatan Presensi)</span></h1>
+            <p class="tab-subtitle">Pusat pencatatan kehadiran harian karyawan. Data dikirim dalam format XML ke EAI layer.</p>
+          </div>
+        </div>
+        
+        <div class="dashboard-grid">
+          <!-- Left Column: Submit Attendance Form -->
+          <section class="card glass-card form-section">
+            <h2><i class="fa-solid fa-calendar-check"></i> Form Presensi Karyawan</h2>
+            <p class="section-desc">Pilih karyawan yang telah disinkronkan dari HRIS untuk memasukkan status kehadiran.</p>
+            
+            <form id="attendance-form">
+              <div class="form-group">
+                <label for="employee-select"><i class="fa-solid fa-user-tie"></i> Karyawan</label>
+                <select id="employee-select" required>
+                  <option value="" disabled selected>Memuat daftar karyawan...</option>
+                </select>
+              </div>
+              
+              <div class="form-group">
+                <label for="attendance-date"><i class="fa-solid fa-calendar-days"></i> Tanggal</label>
+                <input type="date" id="attendance-date" required>
+              </div>
+    
+              <div class="form-group">
+                <label for="attendance-status"><i class="fa-solid fa-circle-question"></i> Status Kehadiran</label>
+                <select id="attendance-status" required>
+                  <option value="" disabled selected>Pilih Status...</option>
+                  <option value="Hadir">Hadir (Present)</option>
+                  <option value="Sakit">Sakit (Sick)</option>
+                  <option value="Izin">Izin (Permission)</option>
+                  <option value="Alpa">Alpa (Absent)</option>
+                </select>
+              </div>
+    
+              <button type="submit" class="btn btn-primary btn-block">
+                <i class="fa-solid fa-paper-plane"></i> Submit Attendance
+              </button>
+            </form>
+          </section>
+          
+          <!-- Right Column: Attendance History Table -->
+          <section class="card glass-card table-section">
+            <div class="table-header">
+              <h2><i class="fa-solid fa-clock-rotate-left"></i> Riwayat Kehadiran Karyawan</h2>
+              <span class="count-badge" id="attendance-count">0 Rekor</span>
+            </div>
+            
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>ID Presensi</th>
+                    <th>Karyawan ID</th>
+                    <th>Nama Karyawan</th>
+                    <th>Tanggal</th>
+                    <th>Status</th>
+                    <th>Sync Status</th>
+                  </tr>
+                </thead>
+                <tbody id="attendance-table-body">
+                  <tr>
+                    <td colspan="6" class="empty-state">
+                      <i class="fa-solid fa-folder-open"></i>
+                      <p>Memuat riwayat kehadiran...</p>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div>
+      
+      <!-- Payroll Tab Content -->
+      <div id="tab-payroll" class="tab-content">
+        <div class="tab-header-pane">
+          <div>
+            <h1>Payroll Service <span>(Penggajian & Keuangan)</span></h1>
+            <p class="tab-subtitle">Menghitung gaji berdasarkan presensi yang masuk melalui EAI (prorata 20 hari kerja).</p>
+          </div>
+        </div>
+        
+        <!-- Report cards row -->
+        <section class="stats-row">
+          <div class="card glass-card stat-card">
+            <div class="stat-icon"><i class="fa-solid fa-users"></i></div>
+            <div class="stat-info">
+              <h3>Total Karyawan</h3>
+              <p id="total-employees">0 Karyawan</p>
+            </div>
+          </div>
+          <div class="card glass-card stat-card">
+            <div class="stat-icon expense"><i class="fa-solid fa-wallet"></i></div>
+            <div class="stat-info">
+              <h3>Total Pengeluaran Gaji</h3>
+              <p id="total-expense">Rp 0</p>
+            </div>
+          </div>
+          <div class="card glass-card stat-card action-card">
+            <button id="generate-payroll-btn" class="btn btn-primary btn-block">
+              <i class="fa-solid fa-calculator"></i> Generate Payroll Baru
+            </button>
+          </div>
+        </section>
+        
+        <div class="dashboard-grid" style="margin-top: 1.5rem;">
+          <!-- Left Column: Attendance Days Tracker -->
+          <section class="card glass-card tracker-section">
+            <h2><i class="fa-solid fa-user-clock"></i> Data Kehadiran Karyawan (EAI Synced)</h2>
+            <p class="section-desc">Data di bawah adalah akumulasi kehadiran yang disinkronkan via RabbitMQ untuk perhitungan gaji (Base: 20 Hari Kerja).</p>
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Nama Karyawan</th>
+                    <th>Kehadiran (Hari)</th>
+                    <th>Gaji Pokok</th>
+                  </tr>
+                </thead>
+                <tbody id="tracker-table-body">
+                  <tr>
+                    <td colspan="4" class="empty-state">
+                      <i class="fa-solid fa-folder-open"></i>
+                      <p>Memuat tracker kehadiran...</p>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+    
+          <!-- Right Column: Calculated Payroll History -->
+          <section class="card glass-card table-section">
+            <div class="table-header">
+              <h2><i class="fa-solid fa-file-invoice-dollar"></i> Laporan Payroll Terhitung</h2>
+              <span class="count-badge" id="payroll-count">0 Slip</span>
+            </div>
+            
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>ID Slip</th>
+                    <th>Karyawan ID</th>
+                    <th>Nama Karyawan</th>
+                    <th>Hadir</th>
+                    <th>Gaji Pokok</th>
+                    <th>Potongan</th>
+                    <th>Total Gaji</th>
+                    <th>Tanggal Hitung</th>
+                  </tr>
+                </thead>
+                <tbody id="payroll-table-body">
+                  <tr>
+                    <td colspan="8" class="empty-state">
+                      <i class="fa-solid fa-folder-open"></i>
+                      <p>Memuat data payroll...</p>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div>
+      
+      <!-- Integration Tab Content -->
+      <div id="tab-integration" class="tab-content">
+        <div class="tab-header-pane">
+          <div>
+            <h1>EAI Monitor Console <span>(Integration Layer)</span></h1>
+            <p class="tab-subtitle">Memantau lalu lintas data, translasi XML -> Canonical JSON, dan routing realtime.</p>
+          </div>
+        </div>
+        
+        <!-- Overview info cards -->
+        <section class="stats-row">
+          <div class="card glass-card stat-card">
+            <div class="stat-icon"><i class="fa-solid fa-arrow-right-arrow-left"></i></div>
+            <div class="stat-info">
+              <h3>Total Event Terproses</h3>
+              <p id="total-events-count">0 Event</p>
+            </div>
+          </div>
+          <div class="card glass-card stat-card">
+            <div class="stat-icon translator"><i class="fa-solid fa-language"></i></div>
+            <div class="stat-info">
+              <h3>Message Translator (XML -> JSON)</h3>
+              <p id="total-translations-count">0 Translasi</p>
+            </div>
+          </div>
+          <div class="card glass-card stat-card">
+            <div class="stat-icon router"><i class="fa-solid fa-route"></i></div>
+            <div class="stat-info">
+              <h3>Content-Based Router</h3>
+              <p id="total-routings-count">0 Routing</p>
+            </div>
+          </div>
+        </section>
+        
+        <!-- Monitor Terminal -->
+        <main class="monitor-container" style="margin-top: 1.5rem;">
+          <section class="card glass-card terminal-card">
+            <div class="terminal-header">
+              <div class="window-buttons">
+                <span class="dot red"></span>
+                <span class="dot yellow"></span>
+                <span class="dot green"></span>
+              </div>
+              <div class="terminal-title"><i class="fa-solid fa-terminal"></i> EAI Realtime Event Stream Console</div>
+              <div class="terminal-actions">
+                <button id="clear-console-btn" class="btn btn-outline btn-xs"><i class="fa-solid fa-trash-can"></i> Clear Console</button>
+              </div>
+            </div>
+            
+            <!-- Filter Tabs -->
+            <div class="filter-tabs">
+              <button class="filter-tab-btn active" data-filter="all">All Events</button>
+              <button class="filter-tab-btn" data-filter="EmployeeCreated">Employee Events</button>
+              <button class="filter-tab-btn" data-filter="AttendanceSubmitted">Attendance Events</button>
+              <button class="filter-tab-btn" data-filter="RabbitMQStatus">Broker Connection</button>
+            </div>
+    
+            <!-- Terminal Console Logs Screen -->
+            <div class="terminal-screen" id="log-console">
+              <div class="log-line" style="color: var(--text-muted);"><span class="log-message">Console is empty. Listening for incoming enterprise integration events...</span></div>
+            </div>
+          </section>
+        </main>
+      </div>
+      
+      <footer class="app-footer">
+        <p>Enterprise Application Integration Dashboard &copy; 2026</p>
+      </footer>
+    </main>
+  </div>
+  
+  <!-- Notification Toast -->
+  <div id="toast" class="toast hidden"></div>
+  
+  <script src="app.js"></script>
+</body>
+</html>

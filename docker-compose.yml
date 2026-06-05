@@ -1,0 +1,104 @@
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rmq-broker
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=user
+      - RABBITMQ_DEFAULT_PASS=password
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - hr_network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 15s
+      retries: 5
+
+  hris-service:
+    build: ./hris-service
+    container_name: hris-service
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - QUEUE_NAME=integration_queue
+      - SERVICE_NAME=hris-service
+    networks:
+      - hr_network
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - hris_db:/usr/src/app/database
+
+  attendance-service:
+    build: ./attendance-service
+    container_name: attendance-service
+    ports:
+      - "3002:3002"
+    environment:
+      - PORT=3002
+      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - QUEUE_NAME=integration_queue
+      - SERVICE_NAME=attendance-service
+    networks:
+      - hr_network
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - attendance_db:/usr/src/app/database
+
+  payroll-service:
+    build: ./payroll-service
+    container_name: payroll-service
+    ports:
+      - "3003:3003"
+    environment:
+      - PORT=3003
+      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - QUEUE_NAME=payroll_queue
+      - SERVICE_NAME=payroll-service
+    networks:
+      - hr_network
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - payroll_db:/usr/src/app/database
+
+  integration-service:
+    build: ./integration-service
+    container_name: integration-service
+    ports:
+      - "3004:3004"
+    environment:
+      - PORT=3004
+      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - QUEUE_NAME=integration_queue
+      - SERVICE_NAME=integration-service
+    networks:
+      - hr_network
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - integration_logs:/usr/src/app/logs
+
+networks:
+  hr_network:
+    driver: bridge
+
+volumes:
+  rabbitmq_data:
+  hris_db:
+  attendance_db:
+  payroll_db:
+  integration_logs:

@@ -1,0 +1,286 @@
+openapi: 3.0.3
+info:
+  title: HR Enterprise Integration API Documentation
+  version: 1.0.0
+  description: API documentation for HRIS, Attendance, Payroll, and Integration services connected via RabbitMQ EAI.
+servers:
+  - url: http://localhost:3001
+    description: HRIS Service
+  - url: http://localhost:3002
+    description: Attendance Service
+  - url: http://localhost:3003
+    description: Payroll Service
+  - url: http://localhost:3004
+    description: Integration Monitoring Service
+
+paths:
+  # HRIS SERVICE ENDPOINTS
+  /employees:
+    get:
+      summary: Retrieve all employees (HRIS)
+      responses:
+        '200':
+          description: A list of employees.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Employee'
+    post:
+      summary: Add a new employee (HRIS)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - email
+                - role
+                - basicSalary
+              properties:
+                name:
+                  type: string
+                  example: "John Doe"
+                email:
+                  type: string
+                  example: "johndoe@enterprise.com"
+                role:
+                  type: string
+                  example: "Software Engineer"
+                basicSalary:
+                  type: number
+                  example: 7500000
+      responses:
+        '201':
+          description: Employee successfully created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Employee'
+
+  /employees/{id}/publish:
+    post:
+      summary: Publish EmployeeCreated event to RabbitMQ (HRIS)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Event successfully published.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  # ATTENDANCE SERVICE ENDPOINTS
+  /attendance:
+    get:
+      summary: Retrieve attendance history (Attendance)
+      responses:
+        '200':
+          description: A list of attendance logs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Attendance'
+    post:
+      summary: Record attendance (Attendance)
+      description: Saves attendance locally, generates XML, and publishes it to RabbitMQ.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - employeeId
+                - date
+                - status
+              properties:
+                employeeId:
+                  type: string
+                  example: "EMP-171758"
+                date:
+                  type: string
+                  format: date
+                  example: "2026-06-05"
+                status:
+                  type: string
+                  enum: [Hadir, Sakit, Izin, Alpa]
+                  example: "Hadir"
+      responses:
+        '201':
+          description: Attendance submitted and XML event published.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/Attendance'
+
+  # PAYROLL SERVICE ENDPOINTS
+  /payroll:
+    get:
+      summary: Retrieve payroll list (Payroll)
+      responses:
+        '200':
+          description: List of payroll entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Payroll'
+  /payroll/generate:
+    post:
+      summary: Calculate and generate payroll for all employees (Payroll)
+      responses:
+        '200':
+          description: Payroll successfully generated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  payrolls:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Payroll'
+
+  # INTEGRATION SERVICE ENDPOINTS
+  /logs:
+    get:
+      summary: Retrieve system integration logs (Integration)
+      responses:
+        '200':
+          description: A list of logged events in the Integration monitoring service.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IntegrationLog'
+  /health:
+    get:
+      summary: Fetch integration service status (Integration)
+      responses:
+        '200':
+          description: System health status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "OK"
+                  rabbitmq:
+                    type: string
+                    example: "Connected"
+
+components:
+  schemas:
+    Employee:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "EMP-171758"
+        name:
+          type: string
+          example: "John Doe"
+        email:
+          type: string
+          example: "johndoe@enterprise.com"
+        role:
+          type: string
+          example: "Software Engineer"
+        basicSalary:
+          type: number
+          example: 7500000
+        published:
+          type: boolean
+          example: true
+
+    Attendance:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "ATT-292837"
+        employeeId:
+          type: string
+          example: "EMP-171758"
+        employeeName:
+          type: string
+          example: "John Doe"
+        date:
+          type: string
+          format: date
+          example: "2026-06-05"
+        status:
+          type: string
+          example: "Hadir"
+
+    Payroll:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "PAY-192837"
+        employeeId:
+          type: string
+          example: "EMP-171758"
+        employeeName:
+          type: string
+          example: "John Doe"
+        attendanceDays:
+          type: integer
+          example: 18
+        basicSalary:
+          type: number
+          example: 7500000
+        deduction:
+          type: number
+          example: 750000
+        totalSalary:
+          type: number
+          example: 6750000
+        generatedAt:
+          type: string
+          format: date-time
+          example: "2026-06-05T15:20:00Z"
+
+    IntegrationLog:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          example: "EmployeeCreated"
+        description:
+          type: string
+          example: "[EmployeeCreated] HRIS -> RabbitMQ"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-06-05T15:20:00.123Z"
