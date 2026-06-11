@@ -3,11 +3,15 @@ const cors = require('cors');
 const path = require('path');
 const amqp = require('amqplib');
 const JsonDatabase = require('./database/db');
+const swaggerUi = require('swagger-ui-express');
+const YAML = require('yamljs');
+const fs = require('fs');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
 
 const PORT = process.env.PORT || 3003;
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://user:password@localhost:5672';

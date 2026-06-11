@@ -3,11 +3,22 @@ const cors = require('cors');
 const path = require('path');
 const { startIntegration, logEmitter, getRabbitStatus } = require('./rabbit');
 const JsonDatabase = require('./logs/db');
+const swaggerUi = require('swagger-ui-express');
+const YAML = require('yamljs');
+const fs = require('fs');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Centralized Swagger Setup
+const swaggerPath = path.join(__dirname, 'openapi.yaml');
+if (fs.existsSync(swaggerPath)) {
+  const swaggerDocument = YAML.load(swaggerPath);
+  app.use('/swagger', swaggerUi.serve, swaggerUi.setup(swaggerDocument, { customSiteTitle: `HR Enterprise API Docs` }));
+}
+
 
 const PORT = process.env.PORT || 3004;
 const db = new JsonDatabase('logs.json');

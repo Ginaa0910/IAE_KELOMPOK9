@@ -1,162 +1,340 @@
-# HR Enterprise Integration (EAI) - HRIS, Attendance & Payroll
+# HR Enterprise Integration (EAI) — HRIS + Attendance + Payroll
 
-Proyek ini adalah sistem integrasi perusahaan (Enterprise Application Integration/EAI) berbasis Microservices dengan tema **HR Enterprise Integration**. Sistem ini menghubungkan tiga aplikasi bisnis berbeda (HRIS, Attendance, dan Payroll) melalui sebuah Integration Layer menggunakan **RabbitMQ** dan **Enterprise Integration Patterns (EIP)**.
-
-Setiap aplikasi memiliki database (JSON file database) sendiri dan tidak mengakses database aplikasi lain secara langsung. Seluruh pertukaran data dilakukan melalui pesan asinkron melalui RabbitMQ.
+Proyek **UAS Enterprise Application Integration** yang mengimplementasikan sistem integrasi HR berbasis **Microservices** dengan **RabbitMQ** sebagai message broker dan berbagai **Enterprise Integration Patterns (EIP)**.
 
 ---
 
-## 1. Arsitektur Sistem
+## 1. Deskripsi Sistem
 
-Sistem ini terbagi menjadi beberapa komponen utama:
-
-```
-                  +-----------------------------------+
-                  |           HRIS Service            | (Port 3001)
-                  +-----------------------------------+
-                                    |
-                       JSON: EmployeeCreated Event
-                                    v
-+------------+    +-----------------------------------+
-| Attendance |--->|         RabbitMQ Exchange         |<---+
-|  Service   |    +-----------------------------------+    |
-+------------+                      |                      |
- (Port 3002)                        |                      |
-     |                              v                      |
-  XML Event                 +---------------+              |
-                            |  Integration  |              |
-                            |    Service    | (Port 3004)  |
-                            +---------------+              |
-                                    |                      |
-                             Canonical JSON                |
-                                    v                      |
-                  +-----------------------------------+    |
-                  |          Payroll Service          |----+ (Port 3003)
-                  +-----------------------------------+
-```
-
-- **HRIS Service (Port 3001)**: Tempat mengelola data karyawan. Menggunakan format JSON. Mengirim event `EmployeeCreated`.
-- **Attendance Service (Port 3002)**: Tempat mencatat presensi karyawan. Menghasilkan payload dalam format XML. Mengirim event `AttendanceSubmitted`.
-- **Payroll Service (Port 3003)**: Tempat menghitung gaji karyawan berdasarkan data kehadiran yang disinkronkan. Menggunakan format JSON.
-- **Integration Service (Port 3004)**: Integration layer pusat yang memantau, menerjemahkan (XML -> Canonical JSON), dan mengarahkan pesan (Routing) ke service tujuan.
-- **RabbitMQ (Port 5672 / Management: 15672)**: Message Broker sebagai media komunikasi asinkron.
-
----
-
-## 2. Enterprise Integration Patterns (EIP) Yang Digunakan
-
-1. **Message Channel**: Menggunakan RabbitMQ Queue (`integration_queue`, `attendance_queue`, `payroll_queue`) untuk mentransmisikan pesan secara asinkron.
-2. **Message Translator**: Diterapkan pada `integration-service/translator.js` untuk mengkonversi data presensi XML dari Attendance Service menjadi Canonical JSON.
-3. **Content-Based Router**: Diterapkan pada `integration-service/router.js` untuk mengarahkan pesan berdasarkan nilai `eventType` (mengirim data karyawan ke database presensi & payroll, dan mengirim data kehadiran ke database payroll).
-4. **Message Endpoint / Adapter**: Diterapkan di masing-masing service (`server.js` & `rabbit.js`) untuk menghubungkan database internal dengan message channel RabbitMQ.
-5. **Canonical Data Model**: Format JSON standar yang disepakati untuk pertukaran data internal di Integration Layer:
-   ```json
-   {
-     "employeeId": "EMP-XXXXXX",
-     "employeeName": "John Doe",
-     "attendanceDays": 1,
-     "salary": 7500000,
-     "eventType": "AttendanceSubmitted",
-     "timestamp": "2026-06-05T15:20:00.000Z"
-   }
-   ```
-
----
-
-## 3. Struktur Folder
+Sistem ini menghubungkan tiga aplikasi bisnis yang terpisah (HRIS, Attendance, dan Payroll) melalui sebuah **Integration Layer** terpusat. Setiap service memiliki database sendiri dan **tidak pernah mengakses database service lain secara langsung**. Seluruh pertukaran data dilakukan secara asinkron melalui RabbitMQ.
 
 ```
-uas-eai/
-├── docker-compose.yml
-├── openapi.yaml
-├── README.md
-│
-├── hris-service/
-│   ├── Dockerfile
-│   ├── server.js
-│   ├── database/
-│   │   ├── db.js (JSON Database Helper)
-│   │   └── db.json (Database Penyimpanan Karyawan)
-│   └── public/ (Dashboard Frontend HRIS)
-│
-├── attendance-service/
-│   ├── Dockerfile
-│   ├── server.js
-│   ├── database/
-│   │   ├── db.js
-│   │   └── db.json (Database Presensi)
-│   └── public/ (Dashboard Frontend Attendance)
-│
-├── payroll-service/
-│   ├── Dockerfile
-│   ├── server.js
-│   ├── database/
-│   │   ├── db.js
-│   │   └── db.json (Database Payroll)
-│   └── public/ (Dashboard Frontend Payroll)
-│
-└── integration-service/
-    ├── Dockerfile
-    ├── server.js
-    ├── rabbit.js (Konfigurasi Consumer & Publisher Broker)
-    ├── router.js (Logika Routing)
-    ├── translator.js (Logika Translasi XML -> JSON)
-    ├── logs/
-    │   └── logs.json (Penyimpanan Logs EAI)
-    └── public/ (Dashboard EAI Monitoring Console)
+                  ┌─────────────────────────────┐
+                  │       HRIS Service          │ :3001
+                  │  (Manajemen Data Karyawan)  │
+                  └──────────────┬──────────────┘
+                                 │ JSON: EmployeeCreated
+                                 ▼
+┌──────────────┐    ┌────────────────────────────┐
+│  Attendance  │───▶│   RabbitMQ: integration_   │
+│   Service    │    │        queue               │
+│   :3002      │    └────────────┬───────────────┘
+└──────────────┘                 │
+  XML: AttendanceSubmitted       ▼
+                  ┌─────────────────────────────┐
+                  │    Integration Service      │ :3004
+                  │  ┌─────────────────────┐   │
+                  │  │ Content-Based Router│   │
+                  │  │ Message Translator  │   │
+                  │  │ Dead Letter Channel │   │
+                  │  └─────────────────────┘   │
+                  └──┬──────────────────────┬──┘
+           Canonical JSON            Canonical JSON
+                     ▼                        ▼
+        ┌────────────────────┐   ┌────────────────────┐
+        │  attendance_queue  │   │   payroll_queue     │
+        └────────┬───────────┘   └──────────┬─────────┘
+                 │                          │
+                 ▼                          ▼
+        ┌────────────────┐        ┌─────────────────────┐
+        │   Attendance   │        │   Payroll Service   │ :3003
+        │   Service      │        │  (Hitung Gaji)      │
+        │  (Sync Emp)    │        └─────────────────────┘
+        └────────────────┘
 ```
 
 ---
 
-## 4. Cara Menjalankan Sistem
+## 2. Daftar Service & Endpoint
 
-Pastikan Anda telah menginstal **Docker** dan **Docker Compose** di komputer Anda.
+### 🏢 HRIS Service — `http://localhost:3001`
 
-1. Buka terminal pada folder root proyek.
-2. Jalankan perintah berikut untuk membuat container dan menjalankan seluruh service:
-   ```bash
-   docker compose up --build
-   ```
-3. Tunggu hingga RabbitMQ siap (healthcheck sukses) dan semua service Express berjalan.
-4. Buka browser dan Anda dapat mengakses dashboard masing-masing service:
-   - **HRIS Service**: [http://localhost:3001](http://localhost:3001)
-   - **Attendance Service**: [http://localhost:3002](http://localhost:3002)
-   - **Payroll Service**: [http://localhost:3003](http://localhost:3003)
-   - **Integration Monitoring**: [http://localhost:3004](http://localhost:3004)
-   - **RabbitMQ Management**: [http://localhost:15672](http://localhost:15672) (Username: `user`, Password: `password`)
+| Method | Endpoint | Deskripsi |
+|--------|----------|-----------|
+| `GET` | `/employees` | Ambil semua data karyawan |
+| `POST` | `/employees` | Tambah karyawan baru |
+| `POST` | `/employees/:id/publish` | Publish event EmployeeCreated ke RabbitMQ |
+
+### 📅 Attendance Service — `http://localhost:3002`
+
+| Method | Endpoint | Deskripsi |
+|--------|----------|-----------|
+| `GET` | `/employees` | Daftar karyawan tersinkronisasi |
+| `GET` | `/attendance` | Riwayat semua presensi |
+| `POST` | `/attendance` | Catat presensi (publish XML ke RabbitMQ) |
+
+### 💰 Payroll Service — `http://localhost:3003`
+
+| Method | Endpoint | Deskripsi |
+|--------|----------|-----------|
+| `GET` | `/employees` | Karyawan + data kehadiran di Payroll |
+| `GET` | `/payroll` | Laporan slip gaji |
+| `POST` | `/payroll/generate` | Generate & hitung gaji semua karyawan |
+
+### 🔌 Integration Service — `http://localhost:3004`
+
+| Method | Endpoint | Deskripsi |
+|--------|----------|-----------|
+| `GET` | `/logs` | Seluruh log aktivitas EAI |
+| `GET` | `/health` | Status koneksi RabbitMQ |
+| `GET` | `/events` | SSE stream log realtime |
+
+📖 Dokumentasi lengkap: lihat [openapi.yaml](./openapi.yaml)
 
 ---
 
-## 5. Panduan Demo Skenario End-to-End
+## 3. Enterprise Integration Patterns (EIP)
 
-Ikuti langkah-langkah berikut untuk menguji seluruh alur integrasi:
+| # | Pattern | Implementasi |
+|---|---------|-------------|
+| 1 | **Message Channel** | RabbitMQ queues: `integration_queue`, `attendance_queue`, `payroll_queue`, `integration_dlq` |
+| 2 | **Message Translator** | `integration-service/translator.js` — konversi XML (Attendance) → Canonical JSON |
+| 3 | **Content-Based Router** | `integration-service/router.js` — routing berdasarkan `eventType` |
+| 4 | **Message Endpoint** | Koneksi RabbitMQ di setiap service (`server.js`) |
+| 5 | **Dead Letter Channel** | `integration_dlq` via exchange `integration_dlx` — pesan gagal setelah 3x retry |
+| 6 | **Canonical Data Model** | Format JSON standar internal (lihat bagian berikut) |
+
+---
+
+## 4. Format Data per Service
+
+### Format Outbound HRIS → RabbitMQ (`integration_queue`)
+
+Format: **JSON**
+
+```json
+{
+  "employeeId": "EMP-171758",
+  "employeeName": "Budi Santoso",
+  "salary": 8000000,
+  "attendanceDays": 0,
+  "eventType": "EmployeeCreated",
+  "timestamp": "2026-06-05T10:00:00.000Z"
+}
+```
+
+### Format Outbound Attendance → RabbitMQ (`integration_queue`)
+
+Format: **XML** (heterogenitas format data)
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<attendance>
+  <employeeId>EMP-171758</employeeId>
+  <employeeName>Budi Santoso</employeeName>
+  <date>2026-06-05</date>
+  <status>Hadir</status>
+  <eventType>AttendanceSubmitted</eventType>
+  <timestamp>2026-06-05T09:00:00.000Z</timestamp>
+</attendance>
+```
+
+### Format Internal Canonical Data Model (CDM)
+
+Setelah Integration Service memproses semua pesan (baik JSON maupun XML), pesan dikonversi ke format **Canonical JSON** ini sebelum diteruskan ke downstream queue:
+
+```json
+{
+  "employeeId": "EMP-171758",
+  "employeeName": "Budi Santoso",
+  "attendanceDays": 1,
+  "salary": 0,
+  "eventType": "AttendanceSubmitted",
+  "timestamp": "2026-06-05T09:00:00.000Z"
+}
+```
+
+> **Keterangan field:**
+> - `attendanceDays`: `1` jika status Hadir, `0` jika Sakit/Izin/Alpa
+> - `salary`: diisi dari HRIS untuk `EmployeeCreated`, `0` untuk `AttendanceSubmitted`
+> - `eventType`: menentukan routing tujuan di Content-Based Router
+
+### Transformasi XML → JSON (Before & After)
+
+**SEBELUM (XML dari Attendance Service):**
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<attendance>
+  <employeeId>EMP-171758</employeeId>
+  <employeeName>Budi Santoso</employeeName>
+  <date>2026-06-05</date>
+  <status>Hadir</status>
+  <eventType>AttendanceSubmitted</eventType>
+  <timestamp>2026-06-05T09:00:00.000Z</timestamp>
+</attendance>
+```
+
+**SESUDAH (Canonical JSON dari Integration Service):**
+```json
+{
+  "employeeId": "EMP-171758",
+  "employeeName": "Budi Santoso",
+  "attendanceDays": 1,
+  "salary": 0,
+  "eventType": "AttendanceSubmitted",
+  "timestamp": "2026-06-05T09:00:00.000Z"
+}
+```
+
+---
+
+## 5. RabbitMQ Queue Architecture
+
+| Queue | Producer | Consumer | Keterangan |
+|-------|----------|----------|-----------|
+| `integration_queue` | HRIS, Attendance | Integration Service | Queue utama EAI. Dikonfigurasi dengan DLX. |
+| `attendance_queue` | Integration Service | Attendance Service | Terima event EmployeeCreated untuk sync |
+| `payroll_queue` | Integration Service | Payroll Service | Terima EmployeeCreated & AttendanceSubmitted |
+| `integration_dlq` | Integration Service (auto via DLX) | Integration Service (monitor only) | Dead Letter Queue untuk pesan gagal |
+
+### Dead Letter Queue (DLQ) Flow
+
+```
+integration_queue
+       │
+       │ (nack setelah retry ke-3)
+       ▼
+integration_dlx (Dead Letter Exchange)
+       │
+       ▼
+integration_dlq (Dead Letter Queue)
+       │
+       ▼
+  [LOG: DLQReceived] — dicatat di logs, tidak diproses ulang
+```
+
+---
+
+## 6. Cara Menjalankan Sistem
+
+### Prasyarat
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) sudah terinstall dan berjalan.
+
+### Langkah-langkah
+
+```bash
+# 1. Clone repository
+git clone <url-repository>
+cd TUBES-EAI-2026
+
+# 2. (Opsional) Sesuaikan environment variables
+# Buka file .env dan ubah kredensial jika diperlukan
+# Default: RABBITMQ_USER=user, RABBITMQ_PASS=password
+
+# 3. Build dan jalankan semua service
+docker compose up --build
+
+# 4. Tunggu hingga semua service siap (±30 detik pertama untuk RabbitMQ)
+```
+
+### Akses Dashboard
+
+| Service | URL | Kredensial |
+|---------|-----|-----------|
+| HRIS Service | http://localhost:3001 | — |
+| Attendance Service | http://localhost:3002 | — |
+| Payroll Service | http://localhost:3003 | — |
+| Integration Monitor | http://localhost:3004 | — |
+| RabbitMQ Management | http://localhost:15672 | `user` / `password` |
+
+---
+
+## 7. Panduan Demo Skenario End-to-End
 
 ### Langkah 1: Tambah & Publish Karyawan Baru
-1. Buka **HRIS Service** ([http://localhost:3001](http://localhost:3001)).
-2. Isi form **Tambah Karyawan Baru** (contoh: Nama: `Budi Santoso`, Jabatan: `Software Engineer`, Gaji Pokok: `8000000`).
-3. Klik tombol **Tambah Karyawan**. Data akan tersimpan di database lokal HRIS sebagai **Draft**.
-4. Cari Budi Santoso di tabel, lalu klik tombol **Publish Event**.
-5. Buka **Integration Service** ([http://localhost:3004](http://localhost:3004)), Anda akan melihat log realtime berikut muncul:
-   - `[EmployeeCreated] HRIS -> RabbitMQ`
-   - `[EmployeeCreated] RabbitMQ -> Attendance`
-   - `[EmployeeCreated] RabbitMQ -> Payroll`
 
-### Langkah 2: Lakukan Presensi Karyawan
-1. Buka **Attendance Service** ([http://localhost:3002](http://localhost:3002)).
-2. Karyawan `Budi Santoso` kini telah otomatis disinkronkan dan muncul di dropdown form presensi.
-3. Pilih `Budi Santoso`, tentukan tanggal, pilih status kehadiran `Hadir` (Present), lalu klik **Submit Attendance**.
-4. Sistem akan membuat data XML secara otomatis dan mengirimkannya ke RabbitMQ.
-5. Periksa log pada **Integration Service**, Anda akan melihat proses EAI berjalan secara realtime:
-   - `[AttendanceSubmitted] Attendance -> RabbitMQ` (Menerima XML)
-   - `[XMLTransformed] XML -> Canonical JSON` (Translasi Data)
-   - `[PayrollGenerated] Integration -> Payroll` (Routing pesan Canonical JSON ke Payroll)
+1. Buka **HRIS Service** → http://localhost:3001
+2. Isi form **Tambah Karyawan Baru** (Nama, Email, Jabatan, Gaji Pokok)
+3. Klik **Tambah Karyawan** — data tersimpan sebagai Draft
+4. Klik **Publish Event** pada baris karyawan tersebut
+5. Buka **Integration Monitor** → http://localhost:3004
+   - Log: `[EmployeeCreated] HRIS → RabbitMQ (JSON)` ✅
+   - Log: `[EmployeeCreated] RabbitMQ → Attendance` ✅
+   - Log: `[EmployeeCreated] RabbitMQ → Payroll` ✅
 
-### Langkah 3: Periksa Tracker Kehadiran & Generate Payroll
-1. Buka **Payroll Service** ([http://localhost:3003](http://localhost:3003)).
-2. Di tabel kiri **Data Kehadiran Karyawan**, Anda dapat melihat data Budi Santoso tersinkronisasi dengan jumlah Kehadiran: `1 / 20 Hari`. (Setiap presensi dengan status "Hadir" yang disubmit akan menambah angka ini).
-3. Ulangi Langkah 2 beberapa kali jika ingin menambah hari hadir.
-4. Klik tombol **Generate Payroll Baru** di bagian kanan atas statistik.
-5. Payroll Service akan secara otomatis memproses gaji Budi Santoso dengan aturan bisnis:
-   - Gaji penuh jika kehadiran = 20 hari.
-   - Potongan gaji dihitung prorata jika kehadiran < 20 hari: `Potongan = (20 - Kehadiran) * (Gaji Pokok / 20)`.
-6. Hasil slip gaji terhitung akan tersimpan dan langsung ditampilkan pada tabel **Laporan Payroll Terhitung** beserta pembaruan kartu metrik **Total Pengeluaran Gaji**.
+### Langkah 2: Catat Presensi
+
+1. Buka **Attendance Service** → http://localhost:3002
+2. Karyawan sudah tersinkronisasi dan muncul di dropdown
+3. Pilih karyawan, tanggal, dan status `Hadir` → Submit
+4. Cek **Integration Monitor**:
+   - Log: `[AttendanceSubmitted] Attendance → RabbitMQ (XML)` ✅
+   - Log: `[XMLTransformed] XML → Canonical JSON (Message Translator)` ✅
+   - Log: `[AttendanceSubmitted] Integration → Payroll` ✅
+
+### Langkah 3: Generate Payroll
+
+1. Buka **Payroll Service** → http://localhost:3003
+2. Lihat data kehadiran karyawan (misal: 18/20 hari)
+3. Klik **Generate Payroll Baru**
+4. Sistem menghitung: `Potongan = (20 - 18) × (Gaji/20)`, lalu tampilkan slip gaji
+
+---
+
+## 8. Environment Variables
+
+Semua konfigurasi dikelola melalui file `.env` di root proyek (jangan commit file ini ke Git!).
+
+| Variable | Default | Keterangan |
+|----------|---------|-----------|
+| `RABBITMQ_USER` | `user` | Username RabbitMQ |
+| `RABBITMQ_PASS` | `password` | Password RabbitMQ |
+| `HRIS_PORT` | `3001` | Port HRIS Service |
+| `ATTENDANCE_PORT` | `3002` | Port Attendance Service |
+| `PAYROLL_PORT` | `3003` | Port Payroll Service |
+| `INTEGRATION_PORT` | `3004` | Port Integration Service |
+| `DLQ_QUEUE` | `integration_dlq` | Nama Dead Letter Queue |
+| `DLX_EXCHANGE` | `integration_dlx` | Nama Dead Letter Exchange |
+| `MAX_RETRY_COUNT` | `3` | Maksimum retry sebelum ke DLQ |
+
+---
+
+## 9. Struktur Folder
+
+```
+TUBES-EAI-2026/
+├── .env                    # Environment variables (jangan di-commit!)
+├── .gitignore
+├── docker-compose.yml      # Orkestrasi semua container
+├── openapi.yaml            # Dokumentasi API lengkap (OpenAPI 3.0.3)
+├── README.md
+│
+├── hris-service/           # Port 3001
+│   ├── Dockerfile
+│   ├── server.js           # API + RabbitMQ publisher
+│   ├── package.json
+│   ├── database/
+│   │   ├── db.js           # JSON database helper
+│   │   └── db.json         # Penyimpanan data karyawan
+│   └── public/             # Frontend dashboard HRIS
+│
+├── attendance-service/     # Port 3002
+│   ├── Dockerfile
+│   ├── server.js           # API + XML publisher + consumer
+│   ├── package.json
+│   ├── database/
+│   │   ├── db.js
+│   │   └── db.json         # Penyimpanan data presensi
+│   └── public/             # Frontend dashboard Attendance
+│
+├── payroll-service/        # Port 3003
+│   ├── Dockerfile
+│   ├── server.js           # API + payroll calculator + consumer
+│   ├── package.json
+│   ├── database/
+│   │   ├── db.js
+│   │   └── db.json         # Penyimpanan data payroll
+│   └── public/             # Frontend dashboard Payroll
+│
+└── integration-service/    # Port 3004
+    ├── Dockerfile
+    ├── server.js            # API (logs, health, SSE)
+    ├── rabbit.js            # Consumer utama + DLQ setup
+    ├── router.js            # EIP: Content-Based Router
+    ├── translator.js        # EIP: Message Translator (XML→JSON)
+    ├── package.json
+    ├── logs/
+    │   ├── db.js
+    │   └── logs.json        # Log aktivitas EAI
+    └── public/              # Frontend dashboard Integration Monitor
+```

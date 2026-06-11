@@ -3,11 +3,15 @@ const cors = require('cors');
 const path = require('path');
 const amqp = require('amqplib');
 const JsonDatabase = require('./database/db');
+const swaggerUi = require('swagger-ui-express');
+const YAML = require('yamljs');
+const fs = require('fs');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
 
 const PORT = process.env.PORT || 3001;
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://user:password@localhost:5672';
@@ -26,7 +30,13 @@ async function connectRabbitMQ() {
       console.log(`Connecting to RabbitMQ at ${RABBITMQ_URL} (Attempt ${retries + 1}/${maxRetries})...`);
       const connection = await amqp.connect(RABBITMQ_URL);
       rabbitChannel = await connection.createChannel();
-      await rabbitChannel.assertQueue(QUEUE_NAME, { durable: true });
+      await rabbitChannel.assertQueue(QUEUE_NAME, {
+        durable: true,
+        arguments: {
+          'x-dead-letter-exchange': 'integration_dlx',
+          'x-dead-letter-routing-key': 'integration_dlq'
+        }
+      });
       console.log('Connected to RabbitMQ and asserted queue:', QUEUE_NAME);
       
       connection.on('error', (err) => {

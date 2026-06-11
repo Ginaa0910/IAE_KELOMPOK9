@@ -8,8 +8,8 @@ services:
       - "5672:5672"
       - "15672:15672"
     environment:
-      - RABBITMQ_DEFAULT_USER=user
-      - RABBITMQ_DEFAULT_PASS=password
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASS}
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     networks:
@@ -24,10 +24,10 @@ services:
     build: ./hris-service
     container_name: hris-service
     ports:
-      - "3001:3001"
+      - "${HRIS_PORT:-3001}:3001"
     environment:
       - PORT=3001
-      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASS}@rabbitmq:5672
       - QUEUE_NAME=integration_queue
       - SERVICE_NAME=hris-service
     networks:
@@ -37,16 +37,18 @@ services:
         condition: service_healthy
     volumes:
       - hris_db:/usr/src/app/database
+      - ./openapi.yaml:/usr/src/app/openapi.yaml:ro
 
   attendance-service:
     build: ./attendance-service
     container_name: attendance-service
     ports:
-      - "3002:3002"
+      - "${ATTENDANCE_PORT:-3002}:3002"
     environment:
       - PORT=3002
-      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASS}@rabbitmq:5672
       - QUEUE_NAME=integration_queue
+      - CONSUME_QUEUE=attendance_queue
       - SERVICE_NAME=attendance-service
     networks:
       - hr_network
@@ -55,15 +57,16 @@ services:
         condition: service_healthy
     volumes:
       - attendance_db:/usr/src/app/database
+      - ./openapi.yaml:/usr/src/app/openapi.yaml:ro
 
   payroll-service:
     build: ./payroll-service
     container_name: payroll-service
     ports:
-      - "3003:3003"
+      - "${PAYROLL_PORT:-3003}:3003"
     environment:
       - PORT=3003
-      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASS}@rabbitmq:5672
       - QUEUE_NAME=payroll_queue
       - SERVICE_NAME=payroll-service
     networks:
@@ -73,16 +76,20 @@ services:
         condition: service_healthy
     volumes:
       - payroll_db:/usr/src/app/database
+      - ./openapi.yaml:/usr/src/app/openapi.yaml:ro
 
   integration-service:
     build: ./integration-service
     container_name: integration-service
     ports:
-      - "3004:3004"
+      - "${INTEGRATION_PORT:-3004}:3004"
     environment:
       - PORT=3004
-      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASS}@rabbitmq:5672
       - QUEUE_NAME=integration_queue
+      - DLQ_QUEUE=${DLQ_QUEUE:-integration_dlq}
+      - DLX_EXCHANGE=${DLX_EXCHANGE:-integration_dlx}
+      - MAX_RETRY_COUNT=${MAX_RETRY_COUNT:-3}
       - SERVICE_NAME=integration-service
     networks:
       - hr_network
@@ -91,6 +98,7 @@ services:
         condition: service_healthy
     volumes:
       - integration_logs:/usr/src/app/logs
+      - ./openapi.yaml:/usr/src/app/openapi.yaml:ro
 
 networks:
   hr_network:

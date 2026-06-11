@@ -1,78 +1,143 @@
 openapi: 3.0.3
 info:
-  title: HR Enterprise Integration API Documentation
-  version: 1.0.0
-  description: API documentation for HRIS, Attendance, Payroll, and Integration services connected via RabbitMQ EAI.
-servers:
-  - url: http://localhost:3001
-    description: HRIS Service
-  - url: http://localhost:3002
-    description: Attendance Service
-  - url: http://localhost:3003
-    description: Payroll Service
-  - url: http://localhost:3004
-    description: Integration Monitoring Service
+  title: HR Enterprise Integration (EAI) API
+  version: 2.0.0
+  description: |
+    Dokumentasi lengkap API untuk sistem integrasi HR Enterprise yang terdiri dari
+    **HRIS Service**, **Attendance Service**, **Payroll Service**, dan **Integration Service**.
+
+    ## Enterprise Integration Patterns yang Diimplementasi
+    - **Message Channel**: Queue RabbitMQ (`integration_queue`, `attendance_queue`, `payroll_queue`, `integration_dlq`)
+    - **Message Translator**: Transformasi XML (Attendance) → Canonical JSON di `integration-service/translator.js`
+    - **Content-Based Router**: Routing berdasarkan `eventType` di `integration-service/router.js`
+    - **Message Endpoint / Adapter**: Koneksi setiap service ke RabbitMQ channel
+    - **Dead Letter Channel**: DLQ `integration_dlq` via `integration_dlx` exchange untuk pesan gagal
+    - **Canonical Data Model**: Format JSON standar internal (lihat schema `CanonicalMessage`)
+
+    ## Format Data per Service
+    | Service | Format Outbound ke RabbitMQ |
+    |---|---|
+    | HRIS Service | **JSON** (`EmployeeCreated`) |
+    | Attendance Service | **XML** (`AttendanceSubmitted`) |
+    | Integration Service | **Canonical JSON** (output setelah translasi) |
+    | Payroll Service | Konsumen Canonical JSON |
+
+tags:
+  - name: HRIS
+    description: Manajemen data master karyawan
+  - name: Attendance
+    description: Pencatatan presensi karyawan harian
+  - name: Payroll
+    description: Perhitungan dan penggajian karyawan
+  - name: Integration
+    description: Monitoring layer integrasi EAI (logs, health, SSE)
 
 paths:
-  # HRIS SERVICE ENDPOINTS
+  # ─────────────────────────────────────────────────
+  # HRIS SERVICE  (http://localhost:3001)
+  # ─────────────────────────────────────────────────
   /employees:
+    servers:
+      - url: http://localhost:3001
+        description: HRIS Service
     get:
-      summary: Retrieve all employees (HRIS)
+      tags: [HRIS]
+      operationId: hris-getEmployees
+      summary: Daftar semua karyawan
+      description: Mengembalikan seluruh data karyawan yang tersimpan di database HRIS.
       responses:
         '200':
-          description: A list of employees.
+          description: Daftar karyawan berhasil diambil.
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/Employee'
+              example:
+                - id: "EMP-171758"
+                  name: "Budi Santoso"
+                  email: "budi@enterprise.com"
+                  role: "Software Engineer"
+                  basicSalary: 8000000
+                  published: true
+                  createdAt: "2026-06-05T10:00:00.000Z"
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
     post:
-      summary: Add a new employee (HRIS)
+      tags: [HRIS]
+      operationId: hris-createEmployee
+      summary: Tambah karyawan baru
+      description: |
+        Membuat record karyawan baru di database lokal HRIS dengan status `published: false`.
+        Karyawan harus di-publish terlebih dahulu agar tersinkronisasi ke service lain.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - name
-                - email
-                - role
-                - basicSalary
-              properties:
-                name:
-                  type: string
-                  example: "John Doe"
-                email:
-                  type: string
-                  example: "johndoe@enterprise.com"
-                role:
-                  type: string
-                  example: "Software Engineer"
-                basicSalary:
-                  type: number
-                  example: 7500000
+              $ref: '#/components/schemas/EmployeeInput'
+            example:
+              name: "Budi Santoso"
+              email: "budi@enterprise.com"
+              role: "Software Engineer"
+              basicSalary: 8000000
       responses:
         '201':
-          description: Employee successfully created.
+          description: Karyawan berhasil ditambahkan.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Employee'
+              example:
+                id: "EMP-171758"
+                name: "Budi Santoso"
+                email: "budi@enterprise.com"
+                role: "Software Engineer"
+                basicSalary: 8000000
+                published: false
+                createdAt: "2026-06-05T10:00:00.000Z"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
   /employees/{id}/publish:
+    servers:
+      - url: http://localhost:3001
+        description: HRIS Service
     post:
-      summary: Publish EmployeeCreated event to RabbitMQ (HRIS)
+      tags: [HRIS]
+      operationId: hris-publishEmployee
+      summary: Publish event EmployeeCreated ke RabbitMQ
+      description: |
+        Mengirim pesan `EmployeeCreated` dalam format **JSON** ke queue RabbitMQ `integration_queue`.
+        Integration Service kemudian akan mem-forward pesan ini ke `attendance_queue` dan `payroll_queue`
+        via Content-Based Router (EIP).
+
+        **Contoh payload JSON yang dikirim ke RabbitMQ:**
+        ```json
+        {
+          "employeeId": "EMP-171758",
+          "employeeName": "Budi Santoso",
+          "salary": 8000000,
+          "attendanceDays": 0,
+          "eventType": "EmployeeCreated",
+          "timestamp": "2026-06-05T10:00:00.000Z"
+        }
+        ```
       parameters:
         - name: id
           in: path
           required: true
+          description: ID karyawan (format EMP-XXXXXX)
           schema:
             type: string
+            example: "EMP-171758"
       responses:
         '200':
-          description: Event successfully published.
+          description: Event EmployeeCreated berhasil dipublish ke RabbitMQ.
           content:
             application/json:
               schema:
@@ -80,50 +145,84 @@ paths:
                 properties:
                   success:
                     type: boolean
+                    example: true
                   message:
                     type: string
+                    example: "Employee event published: Budi Santoso"
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
-  # ATTENDANCE SERVICE ENDPOINTS
+  # ─────────────────────────────────────────────────
+  # ATTENDANCE SERVICE  (http://localhost:3002)
+  # ─────────────────────────────────────────────────
   /attendance:
+    servers:
+      - url: http://localhost:3002
+        description: Attendance Service
     get:
-      summary: Retrieve attendance history (Attendance)
+      tags: [Attendance]
+      operationId: attendance-getAll
+      summary: Daftar seluruh riwayat presensi
+      description: Mengembalikan semua record presensi yang tersimpan di database Attendance Service.
       responses:
         '200':
-          description: A list of attendance logs.
+          description: Riwayat presensi berhasil diambil.
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/Attendance'
+              example:
+                - id: "ATT-292837"
+                  employeeId: "EMP-171758"
+                  employeeName: "Budi Santoso"
+                  date: "2026-06-05"
+                  status: "Hadir"
+                  createdAt: "2026-06-05T09:00:00.000Z"
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
     post:
-      summary: Record attendance (Attendance)
-      description: Saves attendance locally, generates XML, and publishes it to RabbitMQ.
+      tags: [Attendance]
+      operationId: attendance-submit
+      summary: Catat presensi karyawan
+      description: |
+        Menyimpan data presensi, kemudian menghasilkan pesan dalam format **XML** dan
+        mengirimkannya ke RabbitMQ queue `integration_queue`.
+
+        **Contoh XML yang dikirim ke RabbitMQ (SEBELUM transformasi):**
+        ```xml
+        <?xml version="1.0" encoding="UTF-8"?>
+        <attendance>
+          <employeeId>EMP-171758</employeeId>
+          <employeeName>Budi Santoso</employeeName>
+          <date>2026-06-05</date>
+          <status>Hadir</status>
+          <eventType>AttendanceSubmitted</eventType>
+          <timestamp>2026-06-05T09:00:00.000Z</timestamp>
+        </attendance>
+        ```
+
+        Integration Service akan mentransformasi XML ini menjadi **Canonical JSON** (EIP: Message Translator)
+        dan mem-forward-nya ke `payroll_queue`.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - employeeId
-                - date
-                - status
-              properties:
-                employeeId:
-                  type: string
-                  example: "EMP-171758"
-                date:
-                  type: string
-                  format: date
-                  example: "2026-06-05"
-                status:
-                  type: string
-                  enum: [Hadir, Sakit, Izin, Alpa]
-                  example: "Hadir"
+              $ref: '#/components/schemas/AttendanceInput'
+            example:
+              employeeId: "EMP-171758"
+              date: "2026-06-05"
+              status: "Hadir"
       responses:
         '201':
-          description: Attendance submitted and XML event published.
+          description: Presensi berhasil dicatat dan event XML dipublish ke RabbitMQ.
           content:
             application/json:
               schema:
@@ -131,28 +230,105 @@ paths:
                 properties:
                   success:
                     type: boolean
+                    example: true
                   data:
                     $ref: '#/components/schemas/Attendance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Karyawan tidak ditemukan di database lokal Attendance. Sync dari HRIS terlebih dahulu.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Employee not found locally. Please sync from HRIS."
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
-  # PAYROLL SERVICE ENDPOINTS
-  /payroll:
+  /attendance/employees:
+    servers:
+      - url: http://localhost:3002
+        description: Attendance Service
     get:
-      summary: Retrieve payroll list (Payroll)
+      tags: [Attendance]
+      operationId: attendance-getEmployees
+      summary: Daftar karyawan tersinkronisasi (Attendance)
+      description: |
+        **Catatan:** Endpoint aslinya di server adalah `/employees`.
+        Karyawan yang telah disinkronkan ke Attendance Service melalui RabbitMQ setelah event EmployeeCreated.
       responses:
         '200':
-          description: List of payroll entries.
+          description: Daftar karyawan lokal berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      example: "EMP-171758"
+                    name:
+                      type: string
+                      example: "Budi Santoso"
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ─────────────────────────────────────────────────
+  # PAYROLL SERVICE  (http://localhost:3003)
+  # ─────────────────────────────────────────────────
+  /payroll:
+    servers:
+      - url: http://localhost:3003
+        description: Payroll Service
+    get:
+      tags: [Payroll]
+      operationId: payroll-getAll
+      summary: Daftar seluruh laporan payroll
+      description: Mengembalikan semua record slip gaji yang telah digenerate oleh Payroll Service.
+      responses:
+        '200':
+          description: Daftar payroll berhasil diambil.
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/Payroll'
+              example:
+                - id: "PAY-192837"
+                  employeeId: "EMP-171758"
+                  employeeName: "Budi Santoso"
+                  attendanceDays: 18
+                  basicSalary: 8000000
+                  deduction: 800000
+                  totalSalary: 7200000
+                  generatedAt: "2026-06-05T15:20:00.000Z"
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
   /payroll/generate:
+    servers:
+      - url: http://localhost:3003
+        description: Payroll Service
     post:
-      summary: Calculate and generate payroll for all employees (Payroll)
+      tags: [Payroll]
+      operationId: payroll-generate
+      summary: Generate payroll untuk semua karyawan
+      description: |
+        Menghitung gaji semua karyawan berdasarkan data kehadiran yang telah disinkronkan.
+
+        **Aturan Bisnis:**
+        - Standar hari kerja = 20 hari/bulan
+        - Jika kehadiran < 20 hari: `Potongan = (20 - Kehadiran) × (Gaji Pokok / 20)`
+        - Gaji bersih = `Gaji Pokok - Potongan` (minimal 0)
       responses:
         '200':
-          description: Payroll successfully generated.
+          description: Payroll berhasil digenerate untuk semua karyawan.
           content:
             application/json:
               schema:
@@ -160,30 +336,75 @@ paths:
                 properties:
                   success:
                     type: boolean
+                    example: true
                   payrolls:
                     type: array
                     items:
                       $ref: '#/components/schemas/Payroll'
+        '400':
+          description: Tidak ada karyawan terdaftar di Payroll Service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Tidak ada karyawan untuk dihitung payroll-nya."
+        '500':
+          $ref: '#/components/responses/InternalServerError'
 
-  # INTEGRATION SERVICE ENDPOINTS
+  # ─────────────────────────────────────────────────
+  # INTEGRATION MONITORING SERVICE  (http://localhost:3004)
+  # ─────────────────────────────────────────────────
   /logs:
+    servers:
+      - url: http://localhost:3004
+        description: Integration Monitoring Service
     get:
-      summary: Retrieve system integration logs (Integration)
+      tags: [Integration]
+      operationId: integration-getLogs
+      summary: Ambil semua log integrasi EAI
+      description: Mengembalikan seluruh log aktivitas integrasi yang dicatat oleh Integration Service, termasuk event routing, transformasi data, error, dan DLQ events.
       responses:
         '200':
-          description: A list of logged events in the Integration monitoring service.
+          description: Daftar log berhasil diambil.
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/IntegrationLog'
+              example:
+                - id: "LOG-102938"
+                  type: "EmployeeCreated"
+                  description: "[EmployeeCreated] HRIS → RabbitMQ (JSON)"
+                  timestamp: "2026-06-05T10:05:00.000Z"
+                - id: "LOG-283746"
+                  type: "AttendanceSubmitted"
+                  description: "[AttendanceSubmitted] Attendance → RabbitMQ (XML)"
+                  timestamp: "2026-06-05T10:10:00.000Z"
+                - id: "LOG-374829"
+                  type: "XMLTransformed"
+                  description: "[XMLTransformed] XML → Canonical JSON (Message Translator)"
+                  timestamp: "2026-06-05T10:10:01.000Z"
+                - id: "LOG-938472"
+                  type: "DLQ"
+                  description: "[DLQ] Message routed to Dead Letter Queue. Reason: Max retry count (3) exceeded"
+                  timestamp: "2026-06-05T10:12:00.000Z"
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
   /health:
+    servers:
+      - url: http://localhost:3004
+        description: Integration Monitoring Service
     get:
-      summary: Fetch integration service status (Integration)
+      tags: [Integration]
+      operationId: integration-health
+      summary: Cek status kesehatan Integration Service
+      description: Mengembalikan status koneksi RabbitMQ dan timestamp terkini dari Integration Service.
       responses:
         '200':
-          description: System health status.
+          description: Status kesehatan layanan.
           content:
             application/json:
               schema:
@@ -191,96 +412,278 @@ paths:
                 properties:
                   status:
                     type: string
+                    enum: [OK]
                     example: "OK"
                   rabbitmq:
                     type: string
+                    enum: [Connected, Disconnected]
                     example: "Connected"
+                  timestamp:
+                    type: string
+                    format: date-time
+                    example: "2026-06-05T10:00:00.000Z"
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /events:
+    servers:
+      - url: http://localhost:3004
+        description: Integration Monitoring Service
+    get:
+      tags: [Integration]
+      operationId: integration-sse
+      summary: Stream log realtime via Server-Sent Events (SSE)
+      description: |
+        Endpoint untuk menerima log integrasi secara realtime menggunakan protokol Server-Sent Events.
+        Client harus tetap terkoneksi untuk menerima update.
+        Setiap event dikirim dengan format: `data: <JSON>\n\n`
+      responses:
+        '200':
+          description: Stream SSE terbuka. Setiap log dikirim sebagai event.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: "data: {\"id\":\"LOG-102938\",\"type\":\"EmployeeCreated\",\"description\":\"[EmployeeCreated] HRIS → RabbitMQ\",\"timestamp\":\"2026-06-05T10:05:00.000Z\"}\n\n"
+
 
 components:
   schemas:
+    # ── Input Schemas ────────────────────────────────
+    EmployeeInput:
+      type: object
+      required: [name, email, role, basicSalary]
+      properties:
+        name:
+          type: string
+          description: Nama lengkap karyawan
+          example: "Budi Santoso"
+        email:
+          type: string
+          format: email
+          description: Alamat email unik karyawan
+          example: "budi@enterprise.com"
+        role:
+          type: string
+          description: Jabatan atau posisi karyawan
+          example: "Software Engineer"
+        basicSalary:
+          type: number
+          description: Gaji pokok per bulan (dalam Rupiah)
+          example: 8000000
+
+    AttendanceInput:
+      type: object
+      required: [employeeId, date, status]
+      properties:
+        employeeId:
+          type: string
+          description: ID karyawan (harus sudah ada di database Attendance)
+          example: "EMP-171758"
+        date:
+          type: string
+          format: date
+          description: Tanggal presensi (YYYY-MM-DD)
+          example: "2026-06-05"
+        status:
+          type: string
+          enum: [Hadir, Sakit, Izin, Alpa]
+          description: Status kehadiran karyawan. Hanya 'Hadir' yang menambah attendanceDays.
+          example: "Hadir"
+
+    # ── Response Schemas ─────────────────────────────
     Employee:
       type: object
       properties:
         id:
           type: string
+          description: ID unik karyawan (auto-generated, format EMP-XXXXXX)
           example: "EMP-171758"
         name:
           type: string
-          example: "John Doe"
+          example: "Budi Santoso"
         email:
           type: string
-          example: "johndoe@enterprise.com"
+          format: email
+          example: "budi@enterprise.com"
         role:
           type: string
           example: "Software Engineer"
         basicSalary:
           type: number
-          example: 7500000
+          example: 8000000
         published:
           type: boolean
-          example: true
+          description: Status apakah event EmployeeCreated sudah dikirim ke RabbitMQ
+          example: false
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-06-05T10:00:00.000Z"
 
     Attendance:
       type: object
       properties:
         id:
           type: string
+          description: ID unik presensi (auto-generated, format ATT-XXXXXX)
           example: "ATT-292837"
         employeeId:
           type: string
           example: "EMP-171758"
         employeeName:
           type: string
-          example: "John Doe"
+          example: "Budi Santoso"
         date:
           type: string
           format: date
           example: "2026-06-05"
         status:
           type: string
+          enum: [Hadir, Sakit, Izin, Alpa]
           example: "Hadir"
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-06-05T09:00:00.000Z"
 
     Payroll:
       type: object
       properties:
         id:
           type: string
+          description: ID unik slip gaji (auto-generated, format PAY-XXXXXX)
           example: "PAY-192837"
         employeeId:
           type: string
           example: "EMP-171758"
         employeeName:
           type: string
-          example: "John Doe"
+          example: "Budi Santoso"
         attendanceDays:
           type: integer
+          description: Total hari hadir yang terekam bulan ini
           example: 18
         basicSalary:
           type: number
-          example: 7500000
+          example: 8000000
         deduction:
           type: number
-          example: 750000
+          description: "Potongan = (20 - attendanceDays) × (basicSalary / 20)"
+          example: 800000
         totalSalary:
           type: number
-          example: 6750000
+          description: Gaji bersih setelah potongan
+          example: 7200000
         generatedAt:
           type: string
           format: date-time
-          example: "2026-06-05T15:20:00Z"
+          example: "2026-06-05T15:20:00.000Z"
 
     IntegrationLog:
       type: object
       properties:
         id:
           type: string
+          description: ID unik log (format LOG-XXXXXX)
+          example: "LOG-102938"
         type:
           type: string
+          enum:
+            - RabbitMQStatus
+            - EmployeeCreated
+            - AttendanceSubmitted
+            - XMLTransformed
+            - IntegrationError
+            - DLQ
+            - DLQReceived
+          description: Jenis event yang dicatat
           example: "EmployeeCreated"
         description:
           type: string
-          example: "[EmployeeCreated] HRIS -> RabbitMQ"
+          description: Deskripsi detail event
+          example: "[EmployeeCreated] HRIS → RabbitMQ (JSON)"
         timestamp:
           type: string
           format: date-time
-          example: "2026-06-05T15:20:00.123Z"
+          example: "2026-06-05T10:05:00.000Z"
+
+    # ── Canonical Data Model (Internal EAI Message Format) ──
+    CanonicalMessage:
+      type: object
+      description: |
+        **Format Canonical Data Model (CDM)** yang digunakan secara internal oleh Integration Service
+        saat mem-forward pesan ke downstream queue (attendance_queue, payroll_queue).
+        Semua pesan yang masuk ke integration_queue dikonversi ke format ini sebelum di-route.
+      required: [employeeId, employeeName, eventType, timestamp]
+      properties:
+        employeeId:
+          type: string
+          description: ID karyawan
+          example: "EMP-171758"
+        employeeName:
+          type: string
+          description: Nama lengkap karyawan
+          example: "Budi Santoso"
+        attendanceDays:
+          type: integer
+          description: "Jumlah hari hadir (1 jika Hadir, 0 jika Sakit/Izin/Alpa). Hanya relevan untuk event AttendanceSubmitted."
+          example: 1
+        salary:
+          type: number
+          description: Gaji pokok (relevan untuk event EmployeeCreated)
+          example: 8000000
+        eventType:
+          type: string
+          enum: [EmployeeCreated, AttendanceSubmitted]
+          description: Tipe event yang menentukan routing tujuan
+          example: "AttendanceSubmitted"
+        timestamp:
+          type: string
+          format: date-time
+          description: Waktu event dibuat
+          example: "2026-06-05T09:00:00.000Z"
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "Pesan error dari server"
+
+  responses:
+    BadRequest:
+      description: Request tidak valid (field wajib kosong atau format salah).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "All fields are required"
+
+    NotFound:
+      description: Resource yang diminta tidak ditemukan.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "Employee not found"
+
+    ServiceUnavailable:
+      description: Koneksi ke RabbitMQ belum siap.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "RabbitMQ connection not ready"
+
+    InternalServerError:
+      description: Terjadi kesalahan internal pada server.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "Internal server error"
