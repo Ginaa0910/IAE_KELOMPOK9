@@ -130,6 +130,11 @@ app.post('/payroll/generate', async (req, res) => {
       return res.status(400).json({ error: 'Tidak ada karyawan untuk dihitung payroll-nya.' });
     }
 
+    // ── FIX: Hapus semua record payroll lama sebelum generate baru ──
+    const dbData = await db.read();
+    dbData.payrolls = [];
+    await db.write(dbData);
+
     const generatedPayrolls = [];
     const generatedAt = new Date().toISOString();
 
@@ -137,8 +142,6 @@ app.post('/payroll/generate', async (req, res) => {
       const basicSalary = emp.basicSalary || 0;
       const attendanceDays = emp.attendanceDays || 0;
 
-      // Business Rule: Standard work days = 20
-      // Deduction applies if presence < 20 days. Each absent day deducts (basicSalary / 20)
       const missedDays = Math.max(0, 20 - attendanceDays);
       const dailyRate = basicSalary / 20;
       const deduction = Math.round(missedDays * dailyRate);
